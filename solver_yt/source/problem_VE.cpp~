@@ -1,0 +1,247 @@
+#include "problem_VE.h"
+
+ProblemVE::ProblemVE()
+:
+new_Pc_solution(CELL_NUMBER), 
+new_Sc_solution(CELL_NUMBER), 
+new_Pb_solution(CELL_NUMBER), 
+new_Sb_solution(CELL_NUMBER), 
+
+old_Pc_solution(CELL_NUMBER), 
+old_Sc_solution(CELL_NUMBER), 
+old_Pb_solution(CELL_NUMBER), 
+old_Sb_solution(CELL_NUMBER), 
+
+Pcap_solution(CELL_NUMBER),
+
+system_rhs(CELL_NUMBER),
+//flag_vector(CELL_NUMBER),??
+system_matrix(CELL_NUMBER, CELL_NUMBER),
+time(0)
+{
+  // Do we need to initialize those vectors and matrix with all zero? It seems to be automatically done.
+}
+
+
+void ProblemVE::run()
+{
+
+  // interpolate_S(old_S_solution);
+  // interpolate_p(old_p_solution);
+
+  interpolate_Sc(old_Sc_solution, time); //??
+  interpolate_Pc(old_Pc_solution, time);
+
+  cout << "Total number of dofs is " << CELL_NUMBER << endl;
+
+  for (int i = 0; i < 50; ++i)
+  {
+
+    time += DELTA_T;
+
+    triplet_list.clear();
+    system_rhs.setZero();
+    system_matrix.setZero();
+
+    cout << "This is time step " << i << endl;
+    run_one_step();
+    if (i%10 == 0)
+    {
+      output_results(i/10);
+    }
+
+    // assert(("Numerical issue! Saturation is out of bound!",  new_p_solution.maxCoeff() < 2 &&  new_p_solution.maxCoeff() >  -1));
+  }
+
+  post_processing();
+}
+
+
+void ProblemVE::run_one_step()
+{
+  assemble_system_Pb();
+  solve_Pb();
+  compute_Pc();
+  compute_Sc();
+  compute_Sb();
+}
+
+
+void ProblemVE::assemble_system_Pb()
+{
+
+  int counter = 0;
+  for (int id = 0; id < CELL_NUMBER; ++id)
+  {
+    Cell cell(id);
+
+    map<DIRECTION, int>::iterator it;
+    for (it = cell.neighbour_ids_.begin(); it != cell.neighbour_ids_.end(); it++)
+    {
+      double K = compute_K(cell, it->first);
+      double Sc = get_Sc(cell, it->first, old_Pc_solution, old_Sc_solution, time);
+      double Pcap = Pcap_solution.(cell.id_)
+            
+      // Face contribution
+      if (it->second == OUTSIDE_CELL_ID)
+      {
+        double Pc_boundary_value = get_boundary_value_Pc(cell, it->first, time);
+        
+        triplet_list.push_back(T(cell.id_, cell.id_, K*(1/mu_b-Sc/mu_b/(1-sb_res)+krc_star*Sc/mu_c/(1-sb_res))*cell.delta_y_/cell.Nabla_x_)); // north south west east cells ?? 
+	system_rhs(cell.id_) = /*+=*/ K*(krc_star*Sc/mu_c/(1-sb_res))*(Pcap)*cell.delta_y_/cell.Nabla_x_;
+      }
+      else
+      { 
+        triplet_list.push_back(T(cell.id_, cell.id_, K*(1/mu_b-Sc/mu_b/(1-sb_res)+krc_star*Sc/mu_c/(1-sb_res))*cell.delta_y_*cell.Nabla_x_));
+        triplet_list.push_back(T(cell.id_, it->second, -1*kappa)); // ??
+	system_rhs(cell.id_) += K*(krc_star*Sc/mu_c/(1-sb_res))*(Pcap)*cell.delta_y_/cell.Nabla_x_;
+      }
+
+    }
+
+    // Volume contribution
+    system_rhs(cell.id_) += 0*Area;
+  }
+
+  // This is a very efficient way of assembling the matrix A. The function is provided by the external library Eigen.
+  system_matrix.setFromTriplets(triplet_list.begin(), triplet_list.end());
+
+}
+
+
+void ProblemFlow::solve_Pb()
+{
+
+  // SimplicialCholesky<SparseMatrix<double>> chol(A);  // performs a Cholesky factorization of A
+  // VectorXd x = chol.solve(b);         // use the factorization to solve for the given right hand side
+
+  SparseLU<SparseMatrix<double>>   solver;
+  solver.analyzePattern(system_matrix); 
+  solver.factorize(system_matrix); 
+  new_Pb_solution = solver.solve(system_rhs); 
+
+  // cout << MatrixXd(system_matrix) << endl;
+  // cout << new_Pb_solution << endl;
+  // cout << system_rhs << endl;
+  // cout << new_Pb_solution.maxCoeff() << endl;
+
+  old_Pb_solution = new_Pb_solution;
+
+}
+
+
+
+void ProblemVE::compute_Pc()
+{
+
+  old_Pcap_solution.setZero();
+
+  for (int id = 0; id < CELL_NUMBER; ++id)
+    {
+      Cell cell(id);
+
+      new_Pc_solution.(cell.id_) = new_Pb_solution.(cell.id_) + Pcap_solution.(cell.id_);
+    }
+  
+  old_Pc_solution = new_Pc_solution;
+}
+
+
+
+void ProblemVE::compute_Sc()
+{
+
+  new_Sc_solution.setZero();
+
+  for (int id = 0; id < CELL_NUMBER; ++id)
+  {
+    Cell cell(id);
+    map<DIRECTION, int>::iterator it;
+    for (it = cell.neighbour_ids_.begin(); it != cell.neighbour_ids_.end(); it++)
+    {
+
+      // double K_component = compute_K(cell, it->first);
+      // double saturation = get_saturation(cell, it->first, old_p_solution, old_S_solution);
+      // double mobility = get_mobility(saturation);
+      // double fraction = get_fraction(saturation);
+
+      double wind;
+      double K //??
+      double Sc = get_Sc(cell, it->first, new_Pc_solution, old_Sc_solution, time);
+
+      bool is_upwind = determine_upwind(cell, it->first, old_Pc_solution, time);
+
+      // Face contribution
+      if (it->second == OUTSIDE_CELL_ID)
+        wind = (get_boundary_value_Pc(cell, it->first, time) - new_Pc_solution(cell.id_))/(H/2.);
+      else
+        wind = (new_Pc_solution(it->second) - new_Pc_solution(cell.id_))/H;
+
+      new_Sc_solution(cell.id_) += K*krc_star*Sc/mu_c/(1-sb_res)*wind/cell.Delta_x*DELTA_T/porosity/formation_thickness; 
+
+    }
+
+    // Volume contribution ??
+    new_Sc_solution(cell.id_) += old_Sc_solution(cell.id_);
+
+  }
+  old_Sc_solution = new_Sc_solution;
+
+}
+
+
+
+void ProblemVE::compute_Sb()
+{
+
+  new_Sb_solution.setZero();
+
+  for (int id = 0; id < CELL_NUMBER; ++id)
+    {
+      Cell cell(id);
+
+      new_Sb_solution.(cell.id_) = 1 - new_Sc_solution.(cell.id_);
+      double Sb = new_Sb_solution.(cell.id_)
+      Pcap_solution(cell.id_) = Pcap_entry + Sb*formation_thickness*(rho_c - rho_b);
+    }
+  
+  old_Sb_solution = new_Sb_solution;
+
+}
+
+
+
+
+void ProblemVE::output_results(int cycle)
+{
+
+
+  /*VectorXd exact_p_solution(CELL_NUMBER);
+    interpolate_p(exact_p_solution, time);*/
+
+  string Pc_name = "Pc";
+  string Sc_name = "Sc";
+  OutputManager output_manager(cycle);
+
+  output_manager.scalar_output(old_Pc_solution, Pc_name);
+  output_manager.scalar_output(new_Sc_solution, Sc_name);  
+  //output_manager.scalar_output(exact_p_solution, "p_exact");
+ 
+}
+
+
+
+void ProblemVE::post_processing(){}
+/*{
+  double error = 0;
+  for (int i = 0; i < CELL_NUMBER; ++i)
+  {
+    Cell cell(i);
+    error += pow(boundary_function_S(cell.cell_center_, time) - new_S_solution(i), 2)*Area; 
+  }
+  error = sqrt(error);
+
+  // L2 norm should convege in first order w.r.t. mesh size
+  cout << "L2 norm error is " << error << endl;
+  }*/
+

@@ -1,0 +1,62 @@
+#ifndef PROBLEM_FLOW_H
+#define PROBLEM_FLOW_H
+
+#include "common_definitions.h"
+#include "cell.h"
+#include "output_manager.h"
+#include "tools.h"
+
+class ProblemFlow
+{
+	public:
+    /* Constructor. */
+    ProblemFlow(); 
+    /* Run this problem. */
+    void run(); 
+    	
+	private:
+         
+    VectorXd new_p_solution, new_S_solution, old_p_solution, old_S_solution, system_rhs, flag_vector;
+    SparseMatrix<double> system_matrix;
+    vector<T> triplet_list;
+
+    double time;
+
+    void run_one_step();
+
+    void assemble_system_p();
+    void solve_p();
+    void compute_S();
+    void output_results(int cycle);	
+    void post_processing();
+
+
+};
+
+
+
+const double mu_c = 4.25e-5;
+
+const double mu_b = 3e-4;
+
+const double grav = 9.8;
+
+const double rho_c = 710; 
+
+const double rho_b = 1000;
+
+const double rg_c = rho_c * grav;
+
+const double rg_b = rho_b * grav;
+
+const int bc_lambda = 2; 
+
+const double sb_res = 0;
+
+const double krc_star = 1;
+
+const double formation_thickness = 50; 
+
+
+
+#endif
